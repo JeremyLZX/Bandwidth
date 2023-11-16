@@ -438,8 +438,8 @@ control RateEnforcer(in byterate_t measured_rate,
     };
 
     action tcp_calculate_dthres_step0(){
-        threshold_mid_50p = threshold_mid >> 1;
-        threshold_mid_150p = get_thresmid_150p.execute(0);
+        threshold_mid_50p = threshold_mid >> 1; // 0.5T
+        threshold_mid_150p = get_thresmid_150p.execute(0); // 1.5T
     }
     action tcp_calculate_dthres_step1(){
         dthresh_lo_50 = threshold_mid_50p - measured_rate;

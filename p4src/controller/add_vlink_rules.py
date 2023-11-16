@@ -62,7 +62,7 @@ class TernaryKey:
 
     def is_blank(self) -> bool:
         return self.mask == 0 and self.value == 0
-
+print(TernaryKey("0&&&255"))
 
 
 parser = argparse.ArgumentParser(description='Add vlink lookup rules via GRPC',
@@ -85,10 +85,11 @@ parser.add_argument('-P', '--print', action="store_true",
                     help="Print table contents, don't add or delete any entries.")
 args=parser.parse_args()
 
+# Removed to allow non TCP and UDP entry AKA pings and any other that does not use TCP/UDP
 # Exactly one must be provided
-if args.tcp_dport.is_blank() + args.udp_dport.is_blank() != 1:
-    print("Either a TCP or a UDP port match must be provided, not both!")
-    sys.exit(1)
+# if args.tcp_dport.is_blank() + args.udp_dport.is_blank() != 1:
+#     print("Either a TCP or a UDP port match must be provided, not both!")
+#     sys.exit(1)
 
 
 

@@ -48,6 +48,26 @@ control SwitchIngress(
 
     Hash<cms_index_t>(HashAlgorithm_t.CRC16) hash_index;
 
+    Register<bit<1>, vlink_index_t>(32768) guaranteed_flows;
+    RegisterAction<bit<1>, vlink_index_t, bit<1>>(guaranteed_flows) read_guaranteed_flows = {
+        void apply(inout bit<1> guaranteed_flow, out bit<1> retval) {
+            retval = guaranteed_flow;
+        }
+    };
+    Register<byterate_t, vlink_index_t>(32768) maximum_flows;
+    RegisterAction<byterate_t, vlink_index_t, byterate_t>(maximum_flows)  read_maximum_flows= {
+        void apply(inout byterate_t maximum_flow, out byterate_t retval) {
+            if (maximum_flow == 0) { // Default Max Flow Value if not set
+                maximum_flow = 10000;
+            }
+            if (ig_md.afd.measured_rate > maximum_flow) {
+                retval = 1;
+            } else {
+                retval = 0;
+            }
+        }
+    };
+
     apply {
         epoch_t epoch = (epoch_t) ig_intr_md.ingress_mac_tstamp[47:20];//scale to 2^20ns ~= 1ms
 
@@ -97,15 +117,18 @@ control SwitchIngress(
             hdr.tcp.src_port,hdr.tcp.dst_port});
 
         bit<32> copied_rate;
-        @in_hash{ copied_rate=ig_md.afd.measured_rate; }
+        @in_hash{ copied_rate=ig_md.afd.measured_rate; } // from the Rate Estimater which is based on 5 tuple
 
         bit<32> copied_t_lo;
         bit<32> copied_t_mid;
         bit<32> copied_t_hi;
+        // Values are placed in from vlink_lookup. the high and low delta is just 0.5 from the threshold
         @in_hash{ copied_t_lo=ig_md.afd.threshold_lo;  }
         @in_hash{ copied_t_mid=ig_md.afd.threshold;  }
         @in_hash{ copied_t_hi=ig_md.afd.threshold_hi;  }
 
+        // Drop packets based on threshold but also simulate dropping packets based on 
+        // threshold_lo and threshold_hi
         rate_enforcer.apply(copied_rate,//ig_md.afd.measured_rate,
                            copied_t_lo,//ig_md.afd.threshold_lo,
                            copied_t_mid,//ig_md.afd.threshold,
@@ -119,30 +142,35 @@ control SwitchIngress(
                            tcp_drop_flag_mid,
                            ecn_flag);
 
-        if(tcp_isValid){
-            if(tcp_drop_flag_mid!=0){
-                ig_dprsr_md.drop_ctl = 1;
-            }else if(hdr.ipv4.ecn != 0 && ecn_flag!=0){
-                hdr.ipv4.ecn = 0b11;
-                ig_dprsr_md.drop_ctl = 0;
-            }else if(ecn_flag!=0){
-                ig_dprsr_md.drop_ctl = 1;
+
+    if (read_guaranteed_flows.execute(ig_md.afd.vlink_id) != 1 ){       
+        if (read_maximum_flows.execute(ig_md.afd.vlink_id) == 1) { 
+            if(tcp_isValid){
+                if(tcp_drop_flag_mid!=0){
+                    ig_dprsr_md.drop_ctl = 1;
+                }else if(hdr.ipv4.ecn != 0 && ecn_flag!=0){
+                    hdr.ipv4.ecn = 0b11;
+                    ig_dprsr_md.drop_ctl = 0;
+                }else if(ecn_flag!=0){
+                    ig_dprsr_md.drop_ctl = 1;
+                }
+                //override hypothetical rate accumulator
+                udp_drop_flag_lo=tcp_drop_flag_mid;
+                udp_drop_flag_hi=0;
+            }else{//udp
+                if (ig_md.afd.congestion_flag == 0 || work_flag == 1) {
+                    ig_dprsr_md.drop_ctl = 0;
+                }else if(udp_drop_flag_mid!=0){
+                    ig_dprsr_md.drop_ctl = 1;
+                }else{
+                    ig_dprsr_md.drop_ctl = 0;
+                }
             }
-            //override hypothetical rate accumulator
-            udp_drop_flag_lo=tcp_drop_flag_mid;
-            udp_drop_flag_hi=0;
-        }else{//udp
-            if (ig_md.afd.congestion_flag == 0 || work_flag == 1) {
-                ig_dprsr_md.drop_ctl = 0;
-            }else if(udp_drop_flag_mid!=0){
-                ig_dprsr_md.drop_ctl = 1;
-            }else{
-                ig_dprsr_md.drop_ctl = 0;
-            }
-        }
          
             // Deposit or pick up packet bytecounts to allow the lo/hi drop
             // simulations to work around true dropping.
+            // AKA packets that were not suppose to be dropped by t_lo or t_hi, we need to keep track of the 
+            // size and then the next non dropped packet, we will add the size to it.
             byte_dumps.apply(ig_md.afd.vlink_id,
                              (bit<32>) hdr.ipv4.total_len,
                              udp_drop_flag_lo,
@@ -151,6 +179,8 @@ control SwitchIngress(
                              ig_md.afd.bytes_sent_lo,
                              ig_md.afd.bytes_sent_hi,
                              ig_md.afd.bytes_sent_all);
+        }
+    }
     }
 }
 
@@ -184,7 +214,7 @@ control SwitchEgress(
             load_vlink_capacity;
         }
         default_action = load_vlink_capacity(DEFAULT_VLINK_CAPACITY);
-        size = NUM_VLINK_GROUPS;
+        size = 4096;
     }
 
     apply { 

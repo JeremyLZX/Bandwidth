@@ -169,6 +169,7 @@ control VLinkLookup(in header_t hdr, inout afd_metadata_t afd_md,
     }
 
     apply {
+        // if worker
         if (hdr.afd_update.isValid()) {
             afd_md.vlink_id = hdr.afd_update.vlink_id;
             afd_md.threshold = hdr.afd_update.new_threshold;
@@ -176,14 +177,20 @@ control VLinkLookup(in header_t hdr, inout afd_metadata_t afd_md,
         } else {
             tb_match_ip.apply();
         }
+        // read if non worker, write if worker
+
         read_or_write_congestion_flag.apply();
         read_or_write_stored_threshold.apply();
+
+        // If packet is worker
         if (hdr.afd_update.isValid()) {
+            // packet should be dropped right at ingress_deparser
             drop_ctl = 1;
             bypass_egress = 1;
             exit;
             
         } else {
+            // get the T_hi & T_lo
             compute_candidates.apply();
         }
     }
